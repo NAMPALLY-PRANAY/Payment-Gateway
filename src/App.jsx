@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import BankTransferTab from './components/BankTransferTab'
+import CardPaymentTab from './components/CardPaymentTab'
+import PayPalTab from './components/PayPalTab'
+import UpiTab from './components/UpiTab'
 
 const tabs = [
   { id: 'card', label: 'Card Payment' },
@@ -44,6 +48,7 @@ function App() {
   const [receiptMethod, setReceiptMethod] = useState('Card Payment')
   const [discountCode, setDiscountCode] = useState('')
   const [discountApplied, setDiscountApplied] = useState(false)
+  const [paypalPhone, setPaypalPhone] = useState('')
 
   const [cardTilt, setCardTilt] = useState({ x: 0, y: 0 })
   const [cvvFocused, setCvvFocused] = useState(false)
@@ -188,9 +193,93 @@ function App() {
     setCardForm({ cardNumber: '', expiry: '', cvv: '', cardholder: '', email: '' })
     setBankForm({ bankName: '', accountName: '', accountNumber: '', swift: '' })
     setBankError('')
+    setPaypalPhone('')
     setUpiId('')
     setUpiVerified(false)
     setUpiMessage('')
+  }
+
+  const handleCardSubmit = (event) => {
+    event.preventDefault()
+    setCardTouched({
+      cardNumber: true,
+      expiry: true,
+      cvv: true,
+      cardholder: true,
+      email: true,
+    })
+
+    if (!cardValid) {
+      setPaymentState('failed')
+      setStatusLabel('Failed')
+      setErrorShake(true)
+      setTimeout(() => setErrorShake(false), 450)
+      return
+    }
+
+    resetStateMachine()
+    setShow3DS(true)
+  }
+
+  const handlePayPalSubmit = () => {
+    const sanitizedPhone = paypalPhone.replace(/\s+/g, '')
+    if (!/^\+?\d{10,15}$/.test(sanitizedPhone)) {
+      setUpiMessage('Enter a valid phone number to receive PayPal payment request')
+      setPaymentState('failed')
+      setStatusLabel('Failed')
+      setErrorShake(true)
+      setTimeout(() => setErrorShake(false), 450)
+      return
+    }
+
+    resetStateMachine()
+    setUpiMessage(`PayPal request sent to ${sanitizedPhone}`)
+    runStateMachine('PayPal', 'PayPal authorization declined, please retry')
+  }
+
+  const handleBankSubmit = (event) => {
+    event.preventDefault()
+    if (
+      bankForm.bankName.trim().length < 2 ||
+      bankForm.accountName.trim().length < 3 ||
+      bankForm.accountNumber.trim().length < 8 ||
+      bankForm.swift.trim().length < 6
+    ) {
+      setBankError('Please complete all bank transfer details')
+      setPaymentState('failed')
+      setStatusLabel('Failed')
+      setErrorShake(true)
+      setTimeout(() => setErrorShake(false), 450)
+      return
+    }
+    setBankError('')
+    resetStateMachine()
+    setUpiMessage('Waiting for bank authorization...')
+    runStateMachine('Bank Transfer', 'Bank authorization timed out, please retry')
+  }
+
+  const handleUpiVerify = () => {
+    const upiValid = /^[a-zA-Z0-9._-]{2,}@[a-zA-Z]{2,}$/.test(upiId)
+    if (!upiValid) {
+      setUpiMessage('Enter a valid UPI ID')
+      setPaymentState('failed')
+      setStatusLabel('Failed')
+      return
+    }
+    setUpiVerified(true)
+    setUpiMessage('UPI ID verified')
+  }
+
+  const handleUpiSend = () => {
+    if (!upiVerified) {
+      setUpiMessage('Verify UPI ID before sending request')
+      setPaymentState('failed')
+      setStatusLabel('Failed')
+      return
+    }
+    resetStateMachine()
+    setUpiMessage('Request Sent to UPI App...')
+    runStateMachine('UPI', 'UPI collect request failed, try again')
   }
 
   if (checkoutStage === 'completed') {
@@ -267,366 +356,6 @@ function App() {
     )
   }
 
-  const renderCardTab = () => {
-    const maskedCardPreview = cardDigits.length
-      ? cardDigits.padEnd(16, '•').match(/.{1,4}/g).join(' ')
-      : '•••• •••• •••• ••••'
-
-    return (
-      <div className="animate-[tabIn_0.25s_ease]">
-        <div
-          className={`group card-tilt ${cardBounce ? 'animate-[softBounce_0.55s_ease]' : ''}`}
-          onMouseMove={(event) => {
-            const rect = event.currentTarget.getBoundingClientRect()
-            const centerX = rect.left + rect.width / 2
-            const centerY = rect.top + rect.height / 2
-            setCardTilt({
-              x: ((centerY - event.clientY) / rect.height) * 8,
-              y: ((event.clientX - centerX) / rect.width) * 10,
-            })
-          }}
-          onMouseLeave={() => setCardTilt({ x: 0, y: 0 })}
-        >
-          <div
-            className="card-3d-inner relative h-52 w-full"
-            style={{ transform: `rotateX(${cardTilt.x}deg) rotateY(${cardTilt.y}deg)` }}
-          >
-            <div
-              className={`card-3d-face absolute inset-0 rounded-3xl border border-white/20 bg-gradient-to-br from-indigo-600/85 via-indigo-500/70 to-blue-500/70 p-6 shadow-xl transition-transform duration-700 ${
-                cvvFocused ? 'rotate-y-180' : ''
-              }`}
-            >
-              <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.2em] text-white/80">
-                <span>3D Secure Card</span>
-                <span className="rounded-full border border-white/30 px-2 py-0.5 text-[10px]">{cardBrand}</span>
-              </div>
-              <p className="mt-8 text-2xl font-medium tracking-[0.16em]">{maskedCardPreview}</p>
-              <div className="mt-8 flex items-end justify-between">
-                <div>
-                  <p className="text-[10px] uppercase text-white/75">Cardholder</p>
-                  <p className="mt-1 text-sm font-medium uppercase">{cardForm.cardholder || 'YOUR NAME'}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase text-white/75">Expires</p>
-                  <p className="mt-1 text-sm font-medium">{cardForm.expiry || 'MM/YY'}</p>
-                </div>
-              </div>
-            </div>
-
-            <div
-              className={`card-3d-face absolute inset-0 rounded-3xl border border-white/20 bg-gradient-to-br from-slate-800/95 to-indigo-950/90 p-6 transition-transform duration-700 ${
-                cvvFocused ? '' : 'rotate-y-180'
-              }`}
-            >
-              <div className="mt-2 h-10 rounded bg-black/60" />
-              <div className="mt-6 rounded bg-white/90 px-3 py-2 text-right text-sm font-semibold text-slate-900">
-                {cardForm.cvv || '***'}
-              </div>
-              <p className="mt-5 text-xs text-slate-300">Card flips when CVV is focused</p>
-            </div>
-          </div>
-        </div>
-
-        <form
-          className="mt-6 space-y-4"
-          onSubmit={(event) => {
-            event.preventDefault()
-            setCardTouched({
-              cardNumber: true,
-              expiry: true,
-              cvv: true,
-              cardholder: true,
-              email: true,
-            })
-            if (!cardValid) {
-              setPaymentState('failed')
-              setStatusLabel('Failed')
-              setErrorShake(true)
-              setTimeout(() => setErrorShake(false), 450)
-              return
-            }
-            resetStateMachine()
-            setShow3DS(true)
-          }}
-          noValidate
-        >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="sm:col-span-2">
-              <label className="relative block">
-                <input
-                  className="peer w-full rounded-2xl border border-white/15 bg-slate-900/50 px-4 pb-2.5 pt-6 text-sm text-white outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20"
-                  placeholder=" "
-                  inputMode="numeric"
-                  value={cardForm.cardNumber}
-                  onBlur={() => markCardTouched('cardNumber')}
-                  onChange={(event) => onCardNumberChange(event.target.value)}
-                />
-                <span className="pointer-events-none absolute left-4 top-4 text-sm text-slate-400 transition-all peer-placeholder-shown:top-5 peer-placeholder-shown:text-base peer-focus:top-2.5 peer-focus:text-xs peer-focus:text-indigo-300">
-                  Card Number
-                </span>
-                {cardTouched.cardNumber && !cardErrors.cardNumber && (
-                  <span className="absolute right-4 top-4 text-emerald-400">✓</span>
-                )}
-              </label>
-              {cardTouched.cardNumber && cardErrors.cardNumber && (
-                <p className="mt-1 text-xs text-red-400">{cardErrors.cardNumber}</p>
-              )}
-            </div>
-
-            <div>
-              <label className="relative block">
-                <input
-                  className="peer w-full rounded-2xl border border-white/15 bg-slate-900/50 px-4 pb-2.5 pt-6 text-sm text-white outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20"
-                  placeholder=" "
-                  inputMode="numeric"
-                  value={cardForm.expiry}
-                  onBlur={() => markCardTouched('expiry')}
-                  onChange={(event) => onCardExpiryChange(event.target.value)}
-                />
-                <span className="pointer-events-none absolute left-4 top-4 text-sm text-slate-400 transition-all peer-placeholder-shown:top-5 peer-placeholder-shown:text-base peer-focus:top-2.5 peer-focus:text-xs peer-focus:text-indigo-300">
-                  Expiry Date
-                </span>
-                {cardTouched.expiry && !cardErrors.expiry && (
-                  <span className="absolute right-4 top-4 text-emerald-400">✓</span>
-                )}
-              </label>
-              {cardTouched.expiry && cardErrors.expiry && <p className="mt-1 text-xs text-red-400">{cardErrors.expiry}</p>}
-            </div>
-
-            <div>
-              <label className="relative block">
-                <input
-                  className="peer w-full rounded-2xl border border-white/15 bg-slate-900/50 px-4 pb-2.5 pt-6 text-sm text-white outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20"
-                  placeholder=" "
-                  inputMode="numeric"
-                  maxLength={4}
-                  value={cardForm.cvv}
-                  onFocus={() => setCvvFocused(true)}
-                  onBlur={() => {
-                    setCvvFocused(false)
-                    markCardTouched('cvv')
-                  }}
-                  onChange={(event) => updateCard('cvv', event.target.value.replace(/\D/g, '').slice(0, 4))}
-                />
-                <span className="pointer-events-none absolute left-4 top-4 text-sm text-slate-400 transition-all peer-placeholder-shown:top-5 peer-placeholder-shown:text-base peer-focus:top-2.5 peer-focus:text-xs peer-focus:text-indigo-300">
-                  CVV
-                </span>
-                {cardTouched.cvv && !cardErrors.cvv && <span className="absolute right-4 top-4 text-emerald-400">✓</span>}
-              </label>
-              {cardTouched.cvv && cardErrors.cvv && <p className="mt-1 text-xs text-red-400">{cardErrors.cvv}</p>}
-            </div>
-
-            <div className="sm:col-span-2">
-              <label className="relative block">
-                <input
-                  className="peer w-full rounded-2xl border border-white/15 bg-slate-900/50 px-4 pb-2.5 pt-6 text-sm text-white outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20"
-                  placeholder=" "
-                  value={cardForm.cardholder}
-                  onBlur={() => markCardTouched('cardholder')}
-                  onChange={(event) => updateCard('cardholder', event.target.value)}
-                />
-                <span className="pointer-events-none absolute left-4 top-4 text-sm text-slate-400 transition-all peer-placeholder-shown:top-5 peer-placeholder-shown:text-base peer-focus:top-2.5 peer-focus:text-xs peer-focus:text-indigo-300">
-                  Cardholder Name
-                </span>
-                {cardTouched.cardholder && !cardErrors.cardholder && (
-                  <span className="absolute right-4 top-4 text-emerald-400">✓</span>
-                )}
-              </label>
-              {cardTouched.cardholder && cardErrors.cardholder && (
-                <p className="mt-1 text-xs text-red-400">{cardErrors.cardholder}</p>
-              )}
-            </div>
-
-            <div className="sm:col-span-2">
-              <label className="relative block">
-                <input
-                  className="peer w-full rounded-2xl border border-white/15 bg-slate-900/50 px-4 pb-2.5 pt-6 text-sm text-white outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20"
-                  placeholder=" "
-                  type="email"
-                  value={cardForm.email}
-                  onBlur={() => markCardTouched('email')}
-                  onChange={(event) => updateCard('email', event.target.value)}
-                />
-                <span className="pointer-events-none absolute left-4 top-4 text-sm text-slate-400 transition-all peer-placeholder-shown:top-5 peer-placeholder-shown:text-base peer-focus:top-2.5 peer-focus:text-xs peer-focus:text-indigo-300">
-                  Email
-                </span>
-                {cardTouched.email && !cardErrors.email && <span className="absolute right-4 top-4 text-emerald-400">✓</span>}
-              </label>
-              {cardTouched.email && cardErrors.email && <p className="mt-1 text-xs text-red-400">{cardErrors.email}</p>}
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            className={`relative mt-2 w-full overflow-hidden rounded-2xl px-4 py-4 text-base font-semibold text-white transition focus:outline-none focus:ring-4 focus:ring-indigo-500/30 ${
-              cardValid ? 'animate-[buttonPulse_1.7s_ease-in-out_infinite]' : 'opacity-80'
-            } bg-gradient-to-r from-indigo-600 to-blue-500`}
-          >
-            <span className="pointer-events-none absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent opacity-0 transition hover:opacity-100 hover:animate-[shimmer_1.1s_linear_infinite]" />
-            <span className="relative">Pay $249.00</span>
-          </button>
-        </form>
-      </div>
-    )
-  }
-
-  const renderPaypalTab = () => (
-    <div className="animate-[tabIn_0.25s_ease]">
-      <button
-        type="button"
-        className="w-full rounded-2xl bg-[#0070BA] px-5 py-4 text-base font-semibold text-white shadow-lg transition hover:brightness-110"
-        onClick={() => {
-          resetStateMachine()
-          setUpiMessage('Secure checkout via PayPal')
-          runStateMachine('PayPal', 'PayPal authorization declined, please retry')
-        }}
-      >
-        Pay with PayPal
-      </button>
-      <p className="mt-3 text-sm text-slate-300">Secure checkout via PayPal. Redirect simulation is enabled.</p>
-      <div className="mt-5 rounded-2xl border border-white/10 bg-slate-900/40 p-4 text-sm text-slate-300">
-        Simulated redirect → authorization → return success state.
-      </div>
-    </div>
-  )
-
-  const renderBankTab = () => (
-    <form
-      className="animate-[tabIn_0.25s_ease] space-y-4"
-      onSubmit={(event) => {
-        event.preventDefault()
-        if (
-          bankForm.bankName.trim().length < 2 ||
-          bankForm.accountName.trim().length < 3 ||
-          bankForm.accountNumber.trim().length < 8 ||
-          bankForm.swift.trim().length < 6
-        ) {
-          setBankError('Please complete all bank transfer details')
-          setPaymentState('failed')
-          setStatusLabel('Failed')
-          setErrorShake(true)
-          setTimeout(() => setErrorShake(false), 450)
-          return
-        }
-        setBankError('')
-        resetStateMachine()
-        setUpiMessage('Waiting for bank authorization...')
-        runStateMachine('Bank Transfer', 'Bank authorization timed out, please retry')
-      }}
-    >
-      <label className="block text-sm font-medium text-slate-200">Select Bank</label>
-      <input
-        list="bank-list"
-        className="w-full rounded-2xl border border-white/15 bg-slate-900/50 px-4 py-3 text-sm text-white outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20"
-        placeholder="Search bank"
-        value={bankForm.bankName}
-        onChange={(event) => setBankForm((prev) => ({ ...prev, bankName: event.target.value }))}
-      />
-      <datalist id="bank-list">
-        {banks.map((bank) => (
-          <option key={bank} value={bank} />
-        ))}
-      </datalist>
-
-      <input
-        className="w-full rounded-2xl border border-white/15 bg-slate-900/50 px-4 py-3 text-sm text-white outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20"
-        placeholder="Account holder name"
-        value={bankForm.accountName}
-        onChange={(event) => setBankForm((prev) => ({ ...prev, accountName: event.target.value }))}
-      />
-      <input
-        className="w-full rounded-2xl border border-white/15 bg-slate-900/50 px-4 py-3 text-sm text-white outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20"
-        placeholder="Account number"
-        inputMode="numeric"
-        value={bankForm.accountNumber}
-        onChange={(event) =>
-          setBankForm((prev) => ({ ...prev, accountNumber: event.target.value.replace(/\D/g, '').slice(0, 18) }))
-        }
-      />
-      <input
-        className="w-full rounded-2xl border border-white/15 bg-slate-900/50 px-4 py-3 text-sm text-white outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20"
-        placeholder="IFSC / SWIFT"
-        value={bankForm.swift}
-        onChange={(event) => setBankForm((prev) => ({ ...prev, swift: event.target.value.toUpperCase() }))}
-      />
-
-      {bankError && <p className="text-xs text-red-400">{bankError}</p>}
-
-      <button
-        type="submit"
-        className="w-full rounded-2xl bg-gradient-to-r from-indigo-600 to-blue-500 px-4 py-4 font-semibold text-white transition hover:brightness-110"
-      >
-        Proceed to Bank
-      </button>
-
-      <p className="text-sm text-slate-300">Payment processing state: Waiting for bank authorization...</p>
-    </form>
-  )
-
-  const renderUpiTab = () => {
-    const upiValid = /^[a-zA-Z0-9._-]{2,}@[a-zA-Z]{2,}$/.test(upiId)
-    return (
-      <div className="animate-[tabIn_0.25s_ease] space-y-4">
-        <input
-          className="w-full rounded-2xl border border-white/15 bg-slate-900/50 px-4 py-3 text-sm text-white outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20"
-          placeholder="example@upi"
-          value={upiId}
-          onChange={(event) => {
-            setUpiId(event.target.value)
-            setUpiVerified(false)
-          }}
-        />
-
-        <div className="rounded-2xl border border-white/10 bg-slate-900/45 p-5 text-center">
-          <div className="mx-auto h-40 w-40 rounded-xl border border-dashed border-slate-500 bg-[conic-gradient(from_0deg,_#475569,_#64748b,_#334155,_#64748b)] p-2">
-            <div className="flex h-full items-center justify-center rounded-lg bg-slate-900 text-xs text-slate-300">QR CODE</div>
-          </div>
-          <p className="mt-3 text-xs text-slate-400">Scan with any UPI app</p>
-        </div>
-
-        <div className="flex gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              if (!upiValid) {
-                setUpiMessage('Enter a valid UPI ID')
-                setPaymentState('failed')
-                setStatusLabel('Failed')
-                return
-              }
-              setUpiVerified(true)
-              setUpiMessage('UPI ID verified')
-            }}
-            className="flex-1 rounded-2xl border border-indigo-400/45 bg-indigo-500/15 px-4 py-3 text-sm font-medium text-indigo-200 transition hover:bg-indigo-500/25"
-          >
-            Verify UPI ID
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (!upiVerified) {
-                setUpiMessage('Verify UPI ID before sending request')
-                setPaymentState('failed')
-                setStatusLabel('Failed')
-                return
-              }
-              resetStateMachine()
-              setUpiMessage('Request Sent to UPI App...')
-              runStateMachine('UPI', 'UPI collect request failed, try again')
-            }}
-            className="flex-1 rounded-2xl bg-gradient-to-r from-indigo-600 to-blue-500 px-4 py-3 text-sm font-semibold text-white transition hover:brightness-110"
-          >
-            Send Collect Request
-          </button>
-        </div>
-
-        {upiMessage && (
-          <p className={`text-sm ${paymentState === 'failed' ? 'text-red-400' : 'text-emerald-400'}`}>{upiMessage}</p>
-        )}
-      </div>
-    )
-  }
-
   return (
     <main className="relative min-h-screen overflow-hidden bg-slate-900 px-4 py-8 font-[Inter] text-white">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_16%,rgba(79,70,229,0.35),transparent_45%),radial-gradient(circle_at_82%_20%,rgba(16,185,129,0.2),transparent_40%)]" />
@@ -659,10 +388,55 @@ function App() {
               ))}
             </div>
 
-            {activeTab === 'card' && renderCardTab()}
-            {activeTab === 'paypal' && renderPaypalTab()}
-            {activeTab === 'bank' && renderBankTab()}
-            {activeTab === 'upi' && renderUpiTab()}
+            {activeTab === 'card' && (
+              <CardPaymentTab
+                cardDigits={cardDigits}
+                cardBrand={cardBrand}
+                cardBounce={cardBounce}
+                cardTilt={cardTilt}
+                setCardTilt={setCardTilt}
+                cvvFocused={cvvFocused}
+                setCvvFocused={setCvvFocused}
+                cardForm={cardForm}
+                cardTouched={cardTouched}
+                cardErrors={cardErrors}
+                cardValid={cardValid}
+                markCardTouched={markCardTouched}
+                onCardNumberChange={onCardNumberChange}
+                onCardExpiryChange={onCardExpiryChange}
+                updateCard={updateCard}
+                onSubmit={handleCardSubmit}
+              />
+            )}
+            {activeTab === 'paypal' && (
+              <PayPalTab
+                paypalPhone={paypalPhone}
+                setPaypalPhone={setPaypalPhone}
+                onSubmit={handlePayPalSubmit}
+                message={upiMessage}
+                paymentState={paymentState}
+              />
+            )}
+            {activeTab === 'bank' && (
+              <BankTransferTab
+                bankForm={bankForm}
+                setBankForm={setBankForm}
+                banks={banks}
+                bankError={bankError}
+                onSubmit={handleBankSubmit}
+              />
+            )}
+            {activeTab === 'upi' && (
+              <UpiTab
+                upiId={upiId}
+                setUpiId={setUpiId}
+                setUpiVerified={setUpiVerified}
+                upiMessage={upiMessage}
+                paymentState={paymentState}
+                onVerify={handleUpiVerify}
+                onSend={handleUpiSend}
+              />
+            )}
 
             <div className="mt-6 rounded-2xl border border-white/10 bg-slate-900/45 px-4 py-3 text-xs text-slate-300">
               <div className="flex items-center gap-2">
@@ -767,6 +541,10 @@ function App() {
           </aside>
         </div>
       </section>
+
+      <p className="pointer-events-none absolute bottom-2 left-0 right-0 z-10 px-4 text-center text-[10px] text-slate-400/90">
+        This is just a demo UI for development. If we have business cooperation, we may operate it in production.
+      </p>
 
       {show3DS && (
         <div className="fixed inset-0 z-30 grid place-items-center bg-black/65 p-4 backdrop-blur-sm">
